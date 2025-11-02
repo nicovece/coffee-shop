@@ -1,0 +1,73 @@
+{
+  "menu": [
+    {
+      "id": 1,
+      "name": "Espresso",
+      "price": 2.5,
+      "description": "A strong coffee drink made with espresso"
+    },
+    {
+      "id": 2,
+      "name": "Latte",
+      "price": 4.0,
+      "description": "A coffee drink made with espresso and milk"
+    },
+    {
+      "id": 3,
+      "name": "Cappuccino",
+      "price": 4.5,
+      "description": "A coffee drink made with espresso and milk"
+    },
+    {
+      "id": 4,
+      "name": "Americano",
+      "price": 3.0,
+      "description": "A coffee drink made with espresso and water"
+    },
+    {
+      "id": 5,
+      "name": "Flat White",
+      "price": 3.5,
+      "description": "A coffee drink made with espresso and milk"
+    },
+    {
+      "id": 6,
+      "name": "Cortado",
+      "price": 4.0,
+      "description": "A coffee drink made with espresso and milk"
+    },
+    {
+      "id": 7,
+      "name": "Mocha",
+      "price": 5.0,
+      "description": "A coffee drink made with espresso and chocolate"
+    },
+    {
+      "id": 8,
+      "name": "Macchiato",
+      "price": 3.5,
+      "description": "A coffee drink made with espresso and milk"
+    },
+    {
+      "id": 9,
+      "name": "Irish Coffee",
+      "price": 4.5,
+      "description": "A coffee drink made with espresso and whiskey"
+    },
+    {
+      "id": 10,
+      "name": "Affogato",
+      "price": 5.0,
+      "description": "A coffee drink made with espresso and ice cream"
+    }
+  ],
+  "hours": {
+    "weekdays": "7:00 AM - 8:00 PM",
+    "weekends": "8:00 AM - 10:00 PM"
+  },
+  "special": {
+    "name": "Pumpkin Spice Latte",
+    "price": 5.5,
+    "description": "Seasonal favorite!"
+  }
+}
