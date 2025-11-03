@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema';
 import { menuItems, hours, special } from './schema';
+import * as fs from 'fs';
+import * as path from 'path';
 
 async function seed() {
   console.log('🌱 Seeding database...');
@@ -17,24 +19,20 @@ async function seed() {
     await db.delete(hours);
     await db.delete(special);
 
-    // Insert menu items
-    await db.insert(menuItems).values([
-      {
-        name: 'Espresso',
-        price: 2.5,
-        description: 'Strong and bold coffee shot',
-      },
-      {
-        name: 'Latte',
-        price: 3.5,
-        description: 'Smooth espresso with steamed milk',
-      },
-      {
-        name: 'Cappuccino',
-        price: 3.75,
-        description: 'Espresso with foamed milk and cocoa powder',
-      },
-    ]);
+    // Load menu items from JSON file
+    const dataPath = path.join(__dirname, 'data.json');
+    const data = JSON.parse(fs.readFileSync(dataPath, 'utf-8'));
+
+    // Insert menu items from JSON
+    const menuItemsData = data.menu.map(
+      (item: { name: string; price: number; description: string }) => ({
+        name: item.name,
+        price: item.price,
+        description: item.description,
+      })
+    );
+
+    await db.insert(menuItems).values(menuItemsData);
 
     // Insert store hours
     await db.insert(hours).values({

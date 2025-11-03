@@ -4,29 +4,15 @@ import path from 'path';
 import { z } from 'zod';
 import { CoffeeShopData, MenuItem, CreateMenuItemInput } from './types.js';
 
+import { db } from './db';
+import { menuItems, hours, special } from './db/schema';
+import { eq, lte, sql } from 'drizzle-orm';
+
 const app = express();
 const PORT = 8080;
 
 // Security: Disable X-Powered-By header to avoid exposing Express version
 app.disable('x-powered-by');
-
-// Load data from JSON file
-const dataPath = path.join(process.cwd(), 'data.json');
-let data: CoffeeShopData;
-
-try {
-  const fileContent = fs.readFileSync(dataPath, 'utf8');
-  data = JSON.parse(fileContent) as CoffeeShopData;
-} catch (error) {
-  const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-  console.error('Error reading data.json:', errorMessage);
-  process.exit(1);
-}
-
-// Extract data from the loaded JSON
-const menu: MenuItem[] = data.menu;
-const hours = data.hours;
-const special = data.special;
 
 // ============================================================================
 // BASE VALUE SCHEMAS (reusable building blocks)
@@ -184,16 +170,18 @@ app.get('/menu/name/:coffeeName', (req: Request, res: Response) => {
   // TypeScript now knows coffeeName is a valid, trimmed string!
   const { coffeeName } = result.data;
 
-  // Case-insensitive search
-  const item = menu.find(
-    (i) => i.name.toLowerCase() === coffeeName.toLowerCase()
-  );
+  // Case-insensitive search using SQLite LOWER() function
+  const items = db
+    .select()
+    .from(menuItems)
+    .where(sql`LOWER(${menuItems.name}) = LOWER(${coffeeName})`)
+    .all();
 
-  if (!item) {
+  if (items.length === 0) {
     return res.status(404).json({ error: 'Item not found' });
   }
 
-  res.json(item);
+  res.json(items[0]); // Return first match (should be unique due to schema constraint)
 });
 
 app.get('/menu/price/:maxPrice', (req: Request, res: Response) => {
@@ -212,7 +200,13 @@ app.get('/menu/price/:maxPrice', (req: Request, res: Response) => {
 
   // TypeScript now knows maxPrice is a valid positive number!
   const { maxPrice } = result.data;
-  const items = menu.filter((item) => item.price <= maxPrice);
+
+  // Query database and filter by price
+  const items = db
+    .select()
+    .from(menuItems)
+    .where(lte(menuItems.price, maxPrice))
+    .all();
   res.json(items);
 });
 
@@ -232,10 +226,14 @@ app.get('/menu/:id/description', (req: Request, res: Response) => {
 
   // TypeScript now knows id is a valid number!
   const { id } = result.data;
-  const item = menu.find((item) => item.id === id);
+
+  // Query database for item by ID
+  const item = db.select().from(menuItems).where(eq(menuItems.id, id)).get();
+
   if (!item) {
     return res.status(404).json({ error: 'Item not found' });
   }
+
   const formattedPrice = item.price.toFixed(2);
   const formattedDescription = `${item.name} - ${item.description}. Only $${formattedPrice}!`;
   res.json({ description: formattedDescription });
@@ -257,23 +255,54 @@ app.get('/menu/:id', (req: Request, res: Response) => {
 
   // TypeScript now knows id is a valid number!
   const { id } = result.data;
-  const item = menu.find((item) => item.id === id);
+
+  // Query database for item by ID
+  const item = db.select().from(menuItems).where(eq(menuItems.id, id)).get();
+
   if (!item) {
     return res.status(404).json({ error: 'Item not found' });
   }
+
   res.json(item);
 });
 
-app.get('/menu', (req: Request, res: Response) => {
-  res.json(menu);
+app.get('/menu', (req, res) => {
+  const items = db.select().from(menuItems).all();
+  res.json(items);
 });
 
 app.get('/hours', (req: Request, res: Response) => {
-  res.json(hours);
+  try {
+    // Fetch store hours from database
+    // Typically there's only one row with store hours, so we get the first one
+    const storeHours = db.select().from(hours).get();
+
+    if (!storeHours) {
+      return res.status(404).json({ error: 'Store hours not found' });
+    }
+
+    res.json(storeHours);
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ error: 'Failed to retrieve store hours' });
+  }
 });
 
 app.get('/special', (req: Request, res: Response) => {
-  res.json(special);
+  try {
+    // Fetch active daily specials from database
+    // Filter by is_active = true to only return current active specials
+    const activeSpecials = db
+      .select()
+      .from(special)
+      .where(eq(special.is_active, true))
+      .all();
+
+    res.json(activeSpecials);
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ error: 'Failed to retrieve daily specials' });
+  }
 });
 
 // POST routes
@@ -299,33 +328,65 @@ app.post('/menu', (req: Request, res: Response) => {
   // TypeScript now knows result.data is properly typed!
   const { name, price, description } = result.data;
 
-  // Check for duplicates (optional)
-  const exists = menu.find(
-    (item) => item.name.toLowerCase() === name.toLowerCase()
-  );
-  if (exists) {
-    return res.status(409).json({
-      error: 'Coffee with this name already exists',
+  try {
+    // Check for duplicates using case-insensitive search in database
+    const existingItems = db
+      .select()
+      .from(menuItems)
+      .where(sql`LOWER(${menuItems.name}) = LOWER(${name.trim()})`)
+      .all();
+
+    if (existingItems.length > 0) {
+      return res.status(409).json({
+        error: 'Coffee with this name already exists',
+      });
+    }
+
+    // Insert new item - database will auto-generate ID
+    // Note: We don't need to manually set id, createdAt, or updatedAt
+    // - id is auto-increment (primaryKey with autoIncrement)
+    // - createdAt and updatedAt have $defaultFn(() => new Date())
+    db.insert(menuItems).values({
+      name: name.trim(),
+      price: price,
+      description: description.trim(),
+    });
+
+    // Fetch the newly inserted record using the unique name field
+    // This approach is:
+    // 1. Type-safe and clear - TypeScript knows the return type
+    // 2. Reliable - name is unique, so we get exactly what we inserted
+    // 3. Industry-standard pattern when ORM doesn't fully support RETURNING
+    // 4. Efficient - single indexed lookup on unique field
+    // 5. Returns complete record with all auto-generated fields (id, timestamps)
+    const newItem = db
+      .select()
+      .from(menuItems)
+      .where(eq(menuItems.name, name.trim()))
+      .get();
+
+    // This should never happen, but TypeScript safety check
+    if (!newItem) {
+      return res.status(500).json({ error: 'Failed to retrieve created item' });
+    }
+
+    // Send success response with new item
+    res.status(201).json(newItem);
+  } catch (error) {
+    // Handle database constraint violations (e.g., unique constraint)
+    // This is a safety net in case the duplicate check above fails
+    if (error instanceof Error && error.message.includes('UNIQUE constraint')) {
+      return res.status(409).json({
+        error: 'Coffee with this name already exists',
+      });
+    }
+
+    // Log unexpected errors and return generic error message
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to create menu item',
     });
   }
-
-  // Generate new ID
-  const newId =
-    menu.length > 0 ? Math.max(...menu.map((item) => item.id)) + 1 : 1;
-
-  // Create new item - TypeScript ensures all fields are correct
-  const newItem: MenuItem = {
-    id: newId,
-    name: name.trim(),
-    price: price,
-    description: description.trim(),
-  };
-
-  // Add to menu
-  menu.push(newItem);
-
-  // Send success response with new item
-  res.status(201).json(newItem);
 });
 
 // Add a 404 handler at the end (after all routes)
