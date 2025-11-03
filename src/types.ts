@@ -1,4 +1,4 @@
-// Type definitions for our data structures
+// Type definitions for the data structures
 // This makes the code self-documenting and type-safe
 
 export interface MenuItem {

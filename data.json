@@ -59,6 +59,126 @@
       "name": "Affogato",
       "price": 5.0,
       "description": "A coffee drink made with espresso and ice cream"
+    },
+    {
+      "id": 11,
+      "name": "Cold Brew",
+      "price": 4.0,
+      "description": "Slow-steeped coffee served cold over ice"
+    },
+    {
+      "id": 12,
+      "name": "Nitro Cold Brew",
+      "price": 4.5,
+      "description": "Cold brew infused with nitrogen for a smooth, creamy texture"
+    },
+    {
+      "id": 13,
+      "name": "Iced Latte",
+      "price": 4.0,
+      "description": "Espresso and cold milk served over ice"
+    },
+    {
+      "id": 14,
+      "name": "Iced Mocha",
+      "price": 4.5,
+      "description": "Espresso, chocolate, and milk over ice"
+    },
+    {
+      "id": 15,
+      "name": "Matcha Latte",
+      "price": 4.5,
+      "description": "Green tea matcha blended with steamed milk"
+    },
+    {
+      "id": 16,
+      "name": "Chai Latte",
+      "price": 4.0,
+      "description": "Spiced black tea mixed with steamed milk"
+    },
+    {
+      "id": 17,
+      "name": "Hot Chocolate",
+      "price": 3.5,
+      "description": "Rich, creamy chocolate drink topped with whipped cream"
+    },
+    {
+      "id": 18,
+      "name": "Iced Tea",
+      "price": 3.0,
+      "description": "Refreshing brewed tea served over ice"
+    },
+    {
+      "id": 19,
+      "name": "Herbal Tea",
+      "price": 2.5,
+      "description": "Caffeine-free tea with natural herbs and flowers"
+    },
+    {
+      "id": 20,
+      "name": "Green Tea",
+      "price": 2.5,
+      "description": "Classic steamed green tea with a mild flavor"
+    },
+    {
+      "id": 21,
+      "name": "Lemonade",
+      "price": 3.0,
+      "description": "Freshly squeezed lemonade with a hint of mint"
+    },
+    {
+      "id": 22,
+      "name": "Iced Matcha",
+      "price": 4.5,
+      "description": "Cold, smooth matcha green tea over ice"
+    },
+    {
+      "id": 23,
+      "name": "Caramel Frappé",
+      "price": 5.5,
+      "description": "Blended iced coffee drink with caramel syrup and whipped cream"
+    },
+    {
+      "id": 24,
+      "name": "Vanilla Frappé",
+      "price": 5.0,
+      "description": "Blended iced coffee with vanilla flavor"
+    },
+    {
+      "id": 25,
+      "name": "Croissant",
+      "price": 2.5,
+      "description": "Flaky, buttery French pastry"
+    },
+    {
+      "id": 26,
+      "name": "Blueberry Muffin",
+      "price": 3.0,
+      "description": "Soft muffin filled with juicy blueberries"
+    },
+    {
+      "id": 27,
+      "name": "Chocolate Chip Cookie",
+      "price": 2.0,
+      "description": "Classic cookie with melted chocolate chips"
+    },
+    {
+      "id": 28,
+      "name": "Banana Bread",
+      "price": 3.0,
+      "description": "Homemade-style banana loaf slice"
+    },
+    {
+      "id": 29,
+      "name": "Cheesecake Slice",
+      "price": 4.5,
+      "description": "Creamy cheesecake with a graham cracker crust"
+    },
+    {
+      "id": 30,
+      "name": "Avocado Toast",
+      "price": 5.5,
+      "description": "Toasted sourdough topped with mashed avocado and chili flakes"
     }
   ],
   "hours": {
