@@ -6,7 +6,7 @@ import { CoffeeShopData, MenuItem, CreateMenuItemInput } from './types.js';
 
 import { db } from './db';
 import { menuItems, hours, special } from './db/schema';
-import { eq, lte, sql } from 'drizzle-orm';
+import { eq, lte, sql, isNull, and } from 'drizzle-orm';
 
 const app = express();
 const PORT = 8080;
@@ -168,6 +168,16 @@ const updateMenuItemSchema = z
     'At least one field must be provided'
   );
 
+// ============================================================================
+// DATABASE QUERY HELPERS
+// ============================================================================
+
+/**
+ * Filter condition to exclude soft-deleted menu items
+ * Use this in all queries to ensure deleted items are not returned
+ */
+const notDeleted = isNull(menuItems.deletedAt);
+
 // Middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const current_date = new Date().toISOString();
@@ -205,7 +215,9 @@ app.get('/menu/name/:coffeeName', (req: Request, res: Response) => {
   const items = db
     .select()
     .from(menuItems)
-    .where(sql`LOWER(${menuItems.name}) = LOWER(${coffeeName})`)
+    .where(
+      and(sql`LOWER(${menuItems.name}) = LOWER(${coffeeName})`, notDeleted)
+    )
     .all();
 
   if (items.length === 0) {
@@ -236,7 +248,7 @@ app.get('/menu/price/:maxPrice', (req: Request, res: Response) => {
   const items = db
     .select()
     .from(menuItems)
-    .where(lte(menuItems.price, maxPrice))
+    .where(and(lte(menuItems.price, maxPrice), notDeleted))
     .all();
   res.json(items);
 });
@@ -259,7 +271,11 @@ app.get('/menu/:id/description', (req: Request, res: Response) => {
   const { id } = result.data;
 
   // Query database for item by ID
-  const item = db.select().from(menuItems).where(eq(menuItems.id, id)).get();
+  const item = db
+    .select()
+    .from(menuItems)
+    .where(and(eq(menuItems.id, id), notDeleted))
+    .get();
 
   if (!item) {
     return res.status(404).json({ error: 'Item not found' });
@@ -287,8 +303,12 @@ app.get('/menu/:id', (req: Request, res: Response) => {
   // TypeScript now knows id is a valid number!
   const { id } = result.data;
 
-  // Query database for item by ID
-  const item = db.select().from(menuItems).where(eq(menuItems.id, id)).get();
+  // Query database for item by ID (excluding soft-deleted items)
+  const item = db
+    .select()
+    .from(menuItems)
+    .where(and(eq(menuItems.id, id), notDeleted))
+    .get();
 
   if (!item) {
     return res.status(404).json({ error: 'Item not found' });
@@ -298,7 +318,7 @@ app.get('/menu/:id', (req: Request, res: Response) => {
 });
 
 app.get('/menu', (req, res) => {
-  const items = db.select().from(menuItems).all();
+  const items = db.select().from(menuItems).where(notDeleted).all();
   res.json(items);
 });
 
@@ -371,22 +391,25 @@ app.patch('/menu/:id', (req: Request, res: Response) => {
     const existingItem = db
       .select()
       .from(menuItems)
-      .where(eq(menuItems.id, id))
+      .where(and(eq(menuItems.id, id), notDeleted))
       .get();
 
     if (!existingItem) {
       return res.status(404).json({ error: 'Item not found' });
     }
 
-    // 4. If updating name, check for duplicates (excluding current item)
+    // 4. If updating name, check for duplicates (excluding current item and deleted items)
     if (updates.name) {
       const duplicate = db
         .select()
         .from(menuItems)
         .where(
-          sql`LOWER(${menuItems.name}) = LOWER(${updates.name.trim()}) AND ${
-            menuItems.id
-          } != ${id}`
+          and(
+            sql`LOWER(${menuItems.name}) = LOWER(${updates.name.trim()}) AND ${
+              menuItems.id
+            } != ${id}`,
+            notDeleted
+          )
         )
         .get();
 
@@ -410,7 +433,7 @@ app.patch('/menu/:id', (req: Request, res: Response) => {
     const updatedItem = db
       .select()
       .from(menuItems)
-      .where(eq(menuItems.id, id))
+      .where(and(eq(menuItems.id, id), notDeleted))
       .get();
 
     res.json(updatedItem);
@@ -450,7 +473,9 @@ app.post('/menu', (req: Request, res: Response) => {
     const existingItems = db
       .select()
       .from(menuItems)
-      .where(sql`LOWER(${menuItems.name}) = LOWER(${name.trim()})`)
+      .where(
+        and(sql`LOWER(${menuItems.name}) = LOWER(${name.trim()})`, notDeleted)
+      )
       .all();
 
     if (existingItems.length > 0) {
@@ -523,11 +548,66 @@ app.delete('/menu/:id', (req: Request, res: Response) => {
   const { id } = paramResult.data;
 
   try {
+    // 2. Check if item exists (excluding already soft-deleted items)
+    const existingItem = db
+      .select()
+      .from(menuItems)
+      .where(and(eq(menuItems.id, id), notDeleted))
+      .get();
+
+    if (!existingItem) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // 3. Soft delete the item (set deletedAt timestamp)
+    db.update(menuItems)
+      .set({
+        deletedAt: new Date(),
+        updatedAt: new Date(), // Also update updatedAt for consistency
+      })
+      .where(eq(menuItems.id, id))
+      .run();
+
+    // 4. Fetch and return the soft-deleted item
+    const deletedItem = db
+      .select()
+      .from(menuItems)
+      .where(eq(menuItems.id, id))
+      .get();
+
+    res.json({
+      message: 'Item soft-deleted successfully',
+      deletedItem: deletedItem,
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to soft-delete menu item',
+    });
+  }
+});
+
+app.delete('/menu/:id/hard-delete', (req: Request, res: Response) => {
+  // 1. Validate route parameter
+  const paramResult = idParamSchema.safeParse(req.params);
+  if (!paramResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: paramResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  const { id } = paramResult.data;
+
+  try {
     // 2. Check if item exists (and get it for response)
     const existingItem = db
       .select()
       .from(menuItems)
-      .where(eq(menuItems.id, id))
+      .where(and(eq(menuItems.id, id), notDeleted))
       .get();
 
     if (!existingItem) {
@@ -546,6 +626,92 @@ app.delete('/menu/:id', (req: Request, res: Response) => {
     console.error('Database error:', error);
     return res.status(500).json({
       error: 'Failed to delete menu item',
+    });
+  }
+});
+
+// RESTORE routes
+app.post('/menu/:id/restore', (req: Request, res: Response) => {
+  // Step 1: Validate route parameter (same pattern as DELETE routes)
+  // We use the same idParamSchema to ensure the ID is a valid integer
+  const paramResult = idParamSchema.safeParse(req.params);
+  if (!paramResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: paramResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  // Step 2: Extract the validated ID
+  // TypeScript now knows 'id' is a number (not a string) thanks to Zod transformation
+  const { id } = paramResult.data;
+
+  try {
+    // Step 3: Check if item exists AND is soft-deleted
+    // We need to find items where:
+    // - id matches
+    // - deletedAt is NOT null (meaning it's soft-deleted)
+    // We can't use 'notDeleted' here because we WANT deleted items!
+    // Instead, we check if deletedAt IS NOT NULL
+    const deletedItem = db
+      .select()
+      .from(menuItems)
+      .where(eq(menuItems.id, id))
+      .get();
+
+    // Step 4: Validation checks
+    if (!deletedItem) {
+      // Item doesn't exist at all (not even soft-deleted)
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    if (!deletedItem.deletedAt) {
+      // Item exists but is NOT deleted (it's already active)
+      return res.status(400).json({
+        error: 'Item is not deleted',
+        message: 'This item is already active and does not need to be restored',
+      });
+    }
+
+    // Step 5: Restore the item by clearing deletedAt
+    // We set deletedAt to null and update updatedAt to current timestamp
+    db.update(menuItems)
+      .set({
+        deletedAt: null, // Clear the soft-delete timestamp
+        updatedAt: new Date(), // Update the timestamp to track when it was restored
+      })
+      .where(eq(menuItems.id, id))
+      .run();
+
+    // Step 6: Fetch and return the restored item
+    // After updating, we fetch the item again to get the latest state
+    // We use 'notDeleted' filter here because after restore, it should pass that check
+    const restoredItem = db
+      .select()
+      .from(menuItems)
+      .where(and(eq(menuItems.id, id), notDeleted))
+      .get();
+
+    // This should never fail, but TypeScript safety check
+    if (!restoredItem) {
+      return res
+        .status(500)
+        .json({ error: 'Failed to retrieve restored item' });
+    }
+
+    // Step 7: Return success response with restored item
+    res.json({
+      message: 'Item restored successfully',
+      restoredItem: restoredItem,
+    });
+  } catch (error) {
+    // Step 8: Error handling
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to restore menu item',
     });
   }
 });
