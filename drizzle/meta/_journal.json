@@ -8,6 +8,13 @@
       "when": 1762173729354,
       "tag": "0000_fair_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1762257206997,
+      "tag": "0001_new_edwin_jarvis",
+      "breakpoints": true
     }
   ]
 }

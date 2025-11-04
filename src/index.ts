@@ -137,6 +137,37 @@ const createMenuItemSchema = z.object({
     ),
 });
 
+// Schema for updating menu items (all fields optional)
+const updateMenuItemSchema = z
+  .object({
+    name: z
+      .string()
+      .min(2, 'Name must be at least 2 characters')
+      .max(100, 'Name must be at most 100 characters')
+      .transform((val) => val.trim())
+      .refine((val) => val.length >= 2, 'Name cannot be empty after trimming')
+      .optional(),
+    price: z
+      .number()
+      .positive('Price must be a positive number')
+      .max(999.99, 'Price must be reasonable (max $999.99)')
+      .optional(),
+    description: z
+      .string()
+      .min(10, 'Description must be at least 10 characters')
+      .max(500, 'Description must be at most 500 characters')
+      .transform((val) => val.trim())
+      .refine(
+        (val) => val.length >= 10,
+        'Description cannot be empty after trimming'
+      )
+      .optional(),
+  })
+  .refine(
+    (data) => Object.keys(data).length > 0,
+    'At least one field must be provided'
+  );
+
 // Middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const current_date = new Date().toISOString();
@@ -305,6 +336,92 @@ app.get('/special', (req: Request, res: Response) => {
   }
 });
 
+// PATCH ROUTES
+
+app.patch('/menu/:id', (req: Request, res: Response) => {
+  // 1. Validate route parameter
+  const paramResult = idParamSchema.safeParse(req.params);
+  if (!paramResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: paramResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  // 2. Validate request body
+  const bodyResult = updateMenuItemSchema.safeParse(req.body);
+  if (!bodyResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: bodyResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  const { id } = paramResult.data;
+  const updates = bodyResult.data;
+
+  try {
+    // 3. Check if item exists
+    const existingItem = db
+      .select()
+      .from(menuItems)
+      .where(eq(menuItems.id, id))
+      .get();
+
+    if (!existingItem) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // 4. If updating name, check for duplicates (excluding current item)
+    if (updates.name) {
+      const duplicate = db
+        .select()
+        .from(menuItems)
+        .where(
+          sql`LOWER(${menuItems.name}) = LOWER(${updates.name.trim()}) AND ${
+            menuItems.id
+          } != ${id}`
+        )
+        .get();
+
+      if (duplicate) {
+        return res.status(409).json({
+          error: 'Coffee with this name already exists',
+        });
+      }
+    }
+
+    // 5. Perform update
+    db.update(menuItems)
+      .set({
+        ...updates,
+        updatedAt: new Date(), // Explicitly set updatedAt
+      })
+      .where(eq(menuItems.id, id))
+      .run();
+
+    // 6. Fetch and return updated item
+    const updatedItem = db
+      .select()
+      .from(menuItems)
+      .where(eq(menuItems.id, id))
+      .get();
+
+    res.json(updatedItem);
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to update menu item',
+    });
+  }
+});
+
 // POST routes
 
 // Create POST endpoint
@@ -385,6 +502,50 @@ app.post('/menu', (req: Request, res: Response) => {
     console.error('Database error:', error);
     return res.status(500).json({
       error: 'Failed to create menu item',
+    });
+  }
+});
+
+// DELETE routes
+app.delete('/menu/:id', (req: Request, res: Response) => {
+  // 1. Validate route parameter
+  const paramResult = idParamSchema.safeParse(req.params);
+  if (!paramResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: paramResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  const { id } = paramResult.data;
+
+  try {
+    // 2. Check if item exists (and get it for response)
+    const existingItem = db
+      .select()
+      .from(menuItems)
+      .where(eq(menuItems.id, id))
+      .get();
+
+    if (!existingItem) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // 3. Delete the item
+    db.delete(menuItems).where(eq(menuItems.id, id)).run();
+
+    // 4. Return deleted item (common REST pattern)
+    res.json({
+      message: 'Item deleted successfully',
+      deletedItem: existingItem,
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to delete menu item',
     });
   }
 });
