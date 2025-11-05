@@ -1,9 +1,10 @@
 import { testDb } from './setup';
-import { menuItems } from '../db/schema';
+import { menuItems, special } from '../db/schema';
 import { sql, eq } from 'drizzle-orm';
 import type { InferSelectModel } from 'drizzle-orm';
 
 type MenuItem = InferSelectModel<typeof menuItems>;
+type Special = InferSelectModel<typeof special>;
 
 /**
  * Helper to create a test menu item
@@ -51,4 +52,38 @@ export const createTestMenuItems = async (
     items.push(item);
   }
   return items;
+};
+
+/**
+ * Helper to create a test special
+ * Reduces boilerplate in tests
+ */
+export const createTestSpecial = (
+  overrides: Partial<Special> = {}
+): Special => {
+  const defaultSpecial = {
+    name: 'Test Special',
+    price: 4.99,
+    description: 'A delicious test special item',
+    is_active: true,
+    valid_from: null,
+    valid_to: null,
+  };
+
+  const specialData = { ...defaultSpecial, ...overrides };
+
+  testDb.insert(special).values(specialData).run();
+
+  // Fetch the created special by finding the max ID
+  const created = testDb
+    .select()
+    .from(special)
+    .where(eq(special.id, sql`(SELECT MAX(id) FROM daily_special)`))
+    .get();
+
+  if (!created) {
+    throw new Error(`Failed to retrieve created special: ${specialData.name}`);
+  }
+
+  return created;
 };

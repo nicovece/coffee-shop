@@ -2,44 +2,10 @@ import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import './mock-db'; // Must be imported before app
 import { app } from '../index';
+import { createTestSpecial } from './helpers';
 import { testDb } from './setup';
 import { special } from '../db/schema';
-import { eq, sql } from 'drizzle-orm';
-import type { InferSelectModel } from 'drizzle-orm';
-
-type Special = InferSelectModel<typeof special>;
-
-/**
- * Helper to create a test special
- * Reduces boilerplate in tests
- */
-const createTestSpecial = (overrides: Partial<Special> = {}): Special => {
-  const defaultSpecial = {
-    name: 'Test Special',
-    price: 4.99,
-    description: 'A delicious test special item',
-    is_active: true,
-    valid_from: null,
-    valid_to: null,
-  };
-
-  const specialData = { ...defaultSpecial, ...overrides };
-
-  testDb.insert(special).values(specialData).run();
-
-  // Fetch the created special by finding the max ID
-  const created = testDb
-    .select()
-    .from(special)
-    .where(eq(special.id, sql`(SELECT MAX(id) FROM daily_special)`))
-    .get();
-
-  if (!created) {
-    throw new Error(`Failed to retrieve created special: ${specialData.name}`);
-  }
-
-  return created;
-};
+import { eq } from 'drizzle-orm';
 
 describe('DELETE /special/:id - Parameter Validation', () => {
   it('returns 400 for invalid id format', async () => {
