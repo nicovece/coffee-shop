@@ -33,6 +33,13 @@ export const special = sqliteTable('daily_special', {
   is_active: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   valid_from: integer('valid_from', { mode: 'timestamp' }),
   valid_to: integer('valid_to', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  deletedAt: integer('deleted_at', { mode: 'timestamp' }),
 });
 
 export type MenuItem = typeof menuItems.$inferSelect;

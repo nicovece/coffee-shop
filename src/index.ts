@@ -59,6 +59,119 @@ const nonEmptyStringValueSchema = (
       `${fieldName} cannot be empty after trimming`
     );
 
+/**
+ * Validates store hours format
+ * Accepts:
+ * - 12-hour formats: "6am - 8pm", "6:00am - 8:00pm", "6:00 AM - 8:00 PM", "9 AM - 5 PM"
+ * - 24-hour formats: "07:00 - 19:00", "7.00 - 19.00", "0700-1900"
+ * - Special keywords: "Closed", "Off", "24 hours", "24h", "24/7", "open 24 hours"
+ * - Flexible spacing, dashes (-, –, —), and "to" as separator
+ */
+const isValidHoursFormat = (value: string): boolean => {
+  const trimmed = value.trim();
+
+  // Special keywords (case-insensitive)
+  const specialKeywords =
+    /^(closed|off|24\s*h(?:ours?)?|24\s*\/\s*7|open\s*24\s*hours?)$/i;
+  if (specialKeywords.test(trimmed)) {
+    return true;
+  }
+
+  // 12-hour format patterns
+  // Matches: 6am - 8pm, 6:00am - 8:00pm, 6:00 AM - 8:00 PM, 9 AM - 5 PM
+  // Flexible: am/a.m./AM/A.M., spacing, dashes (-, –, —), "to"
+  const twelveHourPattern =
+    /^(\d{1,2}(?::\d{2})?)\s*(?:am|a\.m\.|pm|p\.m\.|AM|A\.M\.|PM|P\.M\.)\s*(?:[-–—]|to)\s*(\d{1,2}(?::\d{2})?)\s*(?:am|a\.m\.|pm|p\.m\.|AM|A\.M\.|PM|P\.M\.)$/i;
+
+  // 24-hour format patterns
+  // Matches: 07:00 - 19:00, 7.00 - 19.00, 0700-1900
+  // Flexible: colons or dots, with or without separators, dashes (-, –, —), "to"
+  const twentyFourHourPattern1 =
+    /^(\d{1,2}[.:]\d{2})\s*(?:[-–—]|to)\s*(\d{1,2}[.:]\d{2})$/; // 07:00 - 19:00 or 7.00 - 19.00
+  const twentyFourHourPattern2 = /^(\d{3,4})\s*(?:[-–—]|to)\s*(\d{3,4})$/; // 0700-1900
+
+  // Check if matches 12-hour format
+  if (twelveHourPattern.test(trimmed)) {
+    // Validate hours are in valid range (1-12) and minutes (00-59)
+    const match = trimmed.match(
+      /^(\d{1,2})(?::(\d{2}))?\s*(?:am|a\.m\.|pm|p\.m\.|AM|A\.M\.|PM|P\.M\.)\s*(?:[-–—]|to)\s*(\d{1,2})(?::(\d{2}))?\s*(?:am|a\.m\.|pm|p\.m\.|AM|A\.M\.|PM|P\.M\.)$/i
+    );
+    if (match) {
+      const startHour = parseInt(match[1], 10);
+      const startMinutes = match[2] ? parseInt(match[2], 10) : 0;
+      const endHour = parseInt(match[3], 10);
+      const endMinutes = match[4] ? parseInt(match[4], 10) : 0;
+
+      // Validate hours are 1-12 and minutes are 0-59
+      if (startHour < 1 || startHour > 12 || startMinutes > 59) return false;
+      if (endHour < 1 || endHour > 12 || endMinutes > 59) return false;
+
+      return true;
+    }
+  }
+
+  // Check if matches 24-hour format
+  if (
+    twentyFourHourPattern1.test(trimmed) ||
+    twentyFourHourPattern2.test(trimmed)
+  ) {
+    // Validate hours are in valid range (00-23) and minutes (00-59)
+    let times: string[] = [];
+
+    // Extract times based on format
+    if (twentyFourHourPattern1.test(trimmed)) {
+      // Format: 07:00 - 19:00 or 7.00 - 19.00
+      const match = trimmed.match(/(\d{1,2}[.:]\d{2})/g);
+      if (match) times = match;
+    } else if (twentyFourHourPattern2.test(trimmed)) {
+      // Format: 0700-1900
+      const match = trimmed.match(/(\d{3,4})/g);
+      if (match) times = match;
+    }
+
+    // Validate each time
+    for (const time of times) {
+      let hours: number, minutes: number;
+
+      if (time.length === 4 && !time.includes(':') && !time.includes('.')) {
+        // Format: 0700
+        hours = parseInt(time.substring(0, 2), 10);
+        minutes = parseInt(time.substring(2, 4), 10);
+      } else {
+        // Format: 07:00 or 7.00
+        const parts = time.split(/[:.]/);
+        hours = parseInt(parts[0], 10);
+        minutes = parseInt(parts[1] || '0', 10);
+      }
+
+      if (hours > 23 || minutes > 59) return false;
+    }
+    return true;
+  }
+
+  return false;
+};
+
+/**
+ * Factory function for validating store hours day fields
+ * Returns an optional schema that validates hours format when provided
+ * @param dayName - Name of the day for error messages (e.g., 'Monday', 'Tuesday')
+ */
+const hoursDaySchema = (dayName: string) =>
+  z
+    .string()
+    .max(50, `${dayName} hours must be at most 50 characters`)
+    .transform((val) => val.trim())
+    .refine(
+      (val) => val.length > 0,
+      `${dayName} hours cannot be empty after trimming`
+    )
+    .refine(
+      (val) => isValidHoursFormat(val),
+      `${dayName} hours must be in a valid format (e.g., "6am - 8pm", "07:00 - 19:00", "Closed")`
+    )
+    .optional();
+
 // ============================================================================
 // PARAM SCHEMA FACTORIES (build route param schemas dynamically)
 // ============================================================================
@@ -108,6 +221,47 @@ const maxPriceParamSchema = createFloatParamSchema('maxPrice');
 const coffeeNameParamSchema = createStringParamSchema('coffeeName', 2, 100);
 
 // ============================================================================
+// REQUEST BODY SCHEMA FACTORIES (reusable field validators)
+// ============================================================================
+
+/**
+ * Schema factory for name fields (shared by menu items and specials)
+ * Validates: 2-100 characters, trimmed, non-empty
+ */
+const nameSchema = () =>
+  z
+    .string()
+    .min(2, 'Name must be at least 2 characters')
+    .max(100, 'Name must be at most 100 characters')
+    .transform((val) => val.trim())
+    .refine((val) => val.length >= 2, 'Name cannot be empty after trimming');
+
+/**
+ * Schema factory for price fields (shared by menu items and specials)
+ * Validates: Positive number, max $999.99
+ */
+const priceSchema = () =>
+  z
+    .number()
+    .positive('Price must be a positive number')
+    .max(999.99, 'Price must be reasonable (max $999.99)');
+
+/**
+ * Schema factory for description fields (shared by menu items and specials)
+ * Validates: 10-500 characters, trimmed, non-empty
+ */
+const descriptionSchema = () =>
+  z
+    .string()
+    .min(10, 'Description must be at least 10 characters')
+    .max(500, 'Description must be at most 500 characters')
+    .transform((val) => val.trim())
+    .refine(
+      (val) => val.length >= 10,
+      'Description cannot be empty after trimming'
+    );
+
+// ============================================================================
 // REQUEST BODY SCHEMAS
 // ============================================================================
 
@@ -116,56 +270,103 @@ const coffeeNameParamSchema = createStringParamSchema('coffeeName', 2, 100);
 // - Description: 10-500 characters (needs to be descriptive but not too long)
 // - Price: Positive number with reasonable max (e.g., $999.99)
 const createMenuItemSchema = z.object({
-  name: z
-    .string()
-    .min(2, 'Name must be at least 2 characters')
-    .max(100, 'Name must be at most 100 characters')
-    .transform((val) => val.trim())
-    .refine((val) => val.length >= 2, 'Name cannot be empty after trimming'),
-  price: z
-    .number()
-    .positive('Price must be a positive number')
-    .max(999.99, 'Price must be reasonable (max $999.99)'),
-  description: z
-    .string()
-    .min(10, 'Description must be at least 10 characters')
-    .max(500, 'Description must be at most 500 characters')
-    .transform((val) => val.trim())
-    .refine(
-      (val) => val.length >= 10,
-      'Description cannot be empty after trimming'
-    ),
+  name: nameSchema(),
+  price: priceSchema(),
+  description: descriptionSchema(),
 });
 
 // Schema for updating menu items (all fields optional)
 const updateMenuItemSchema = z
   .object({
-    name: z
+    name: nameSchema().optional(),
+    price: priceSchema().optional(),
+    description: descriptionSchema().optional(),
+  })
+  .refine(
+    (data) => Object.keys(data).length > 0,
+    'At least one field must be provided'
+  );
+
+// Schema for updating store hours (all day fields optional, but at least one required)
+const updateHoursSchema = z
+  .object({
+    monday: hoursDaySchema('Monday'),
+    tuesday: hoursDaySchema('Tuesday'),
+    wednesday: hoursDaySchema('Wednesday'),
+    thursday: hoursDaySchema('Thursday'),
+    friday: hoursDaySchema('Friday'),
+    saturday: hoursDaySchema('Saturday'),
+    sunday: hoursDaySchema('Sunday'),
+  })
+  .refine(
+    (data) => Object.keys(data).length > 0,
+    'At least one day must be provided'
+  );
+
+// Schema for creating a new special
+const createSpecialSchema = z
+  .object({
+    name: nameSchema(),
+    price: priceSchema(),
+    description: descriptionSchema(),
+    is_active: z.boolean().optional().default(true),
+    valid_from: z
       .string()
-      .min(2, 'Name must be at least 2 characters')
-      .max(100, 'Name must be at most 100 characters')
-      .transform((val) => val.trim())
-      .refine((val) => val.length >= 2, 'Name cannot be empty after trimming')
+      .datetime('valid_from must be a valid ISO date string')
       .optional(),
-    price: z
-      .number()
-      .positive('Price must be a positive number')
-      .max(999.99, 'Price must be reasonable (max $999.99)')
-      .optional(),
-    description: z
+    valid_to: z
       .string()
-      .min(10, 'Description must be at least 10 characters')
-      .max(500, 'Description must be at most 500 characters')
-      .transform((val) => val.trim())
-      .refine(
-        (val) => val.length >= 10,
-        'Description cannot be empty after trimming'
-      )
+      .datetime('valid_to must be a valid ISO date string')
+      .optional(),
+  })
+  .refine(
+    (data) => {
+      // If both dates are provided, valid_from must be before valid_to
+      if (data.valid_from && data.valid_to) {
+        return new Date(data.valid_from) < new Date(data.valid_to);
+      }
+      return true;
+    },
+    {
+      message: 'valid_from must be before valid_to',
+      path: ['valid_from'],
+    }
+  );
+
+// Schema for updating a special (all fields optional)
+const updateSpecialSchema = z
+  .object({
+    name: nameSchema().optional(),
+    price: priceSchema().optional(),
+    description: descriptionSchema().optional(),
+    is_active: z.boolean().optional(),
+    valid_from: z
+      .string()
+      .datetime('valid_from must be a valid ISO date string')
+      .nullable()
+      .optional(),
+    valid_to: z
+      .string()
+      .datetime('valid_to must be a valid ISO date string')
+      .nullable()
       .optional(),
   })
   .refine(
     (data) => Object.keys(data).length > 0,
     'At least one field must be provided'
+  )
+  .refine(
+    (data) => {
+      // If both dates are provided, valid_from must be before valid_to
+      if (data.valid_from && data.valid_to) {
+        return new Date(data.valid_from) < new Date(data.valid_to);
+      }
+      return true;
+    },
+    {
+      message: 'valid_from must be before valid_to',
+      path: ['valid_from'],
+    }
   );
 
 // ============================================================================
@@ -177,6 +378,12 @@ const updateMenuItemSchema = z
  * Use this in all queries to ensure deleted items are not returned
  */
 const notDeleted = isNull(menuItems.deletedAt);
+
+/**
+ * Filter condition to exclude soft-deleted specials
+ * Use this in all queries to ensure deleted specials are not returned
+ */
+const notDeletedSpecial = isNull(special.deletedAt);
 
 // Middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -339,20 +546,93 @@ app.get('/hours', (req: Request, res: Response) => {
   }
 });
 
-app.get('/special', (req: Request, res: Response) => {
+app.get('/specials', (req: Request, res: Response) => {
   try {
-    // Fetch active daily specials from database
-    // Filter by is_active = true to only return current active specials
+    // Fetch all daily specials from database (active and inactive)
+    // This endpoint returns all specials regardless of status
+    // Useful for admin views where you need to see all specials
+    // Exclude soft-deleted specials
+    const allSpecials = db
+      .select()
+      .from(special)
+      .where(notDeletedSpecial)
+      .all();
+
+    res.json(allSpecials);
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({ error: 'Failed to retrieve daily specials' });
+  }
+});
+
+app.get('/specials/active', (req: Request, res: Response) => {
+  try {
+    // Fetch only active daily specials from database
+    // This endpoint filters by is_active = true to return only current active specials
+    // This is the public-facing endpoint for customers to see current specials
+    // Since we ensure only one special is active at a time, this typically returns one special
+    // Exclude soft-deleted specials
     const activeSpecials = db
       .select()
       .from(special)
-      .where(eq(special.is_active, true))
+      .where(and(eq(special.is_active, true), notDeletedSpecial))
       .all();
 
     res.json(activeSpecials);
   } catch (error) {
     console.error('Database error:', error);
-    res.status(500).json({ error: 'Failed to retrieve daily specials' });
+    res.status(500).json({ error: 'Failed to retrieve active daily specials' });
+  }
+});
+
+app.get('/specials/:id', (req: Request, res: Response) => {
+  // Step 1: Validate route parameter
+  // The idParamSchema validates that the :id parameter is a valid integer
+  // It converts the string parameter to a number automatically
+  const result = idParamSchema.safeParse(req.params);
+
+  if (!result.success) {
+    // If validation fails, return 400 (Bad Request) with error details
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: result.error.issues.map((err) => ({
+        field: err.path.join('.'), // Join the path array: ["id"] -> "id"
+        message: err.message, // Error message from Zod
+      })),
+    });
+  }
+
+  // Step 2: Extract the validated ID
+  // TypeScript now knows 'id' is a number (not a string) thanks to Zod transformation
+  const { id } = result.data;
+
+  try {
+    // Step 3: Query the database for the special by ID
+    // Exclude soft-deleted specials
+    const specialItem = db
+      .select()
+      .from(special)
+      .where(and(eq(special.id, id), notDeletedSpecial))
+      .get();
+
+    // Step 4: Check if the special was found
+    if (!specialItem) {
+      // If no special found, return 404 (Not Found)
+      // This is the standard HTTP status for "resource doesn't exist"
+      return res.status(404).json({ error: 'Special not found' });
+    }
+
+    // Step 5: Return the special
+    // HTTP 200 (OK) is the default status for successful GET requests
+    // Return the complete special object with all fields
+    res.json(specialItem);
+  } catch (error) {
+    // Step 6: Handle database errors
+    // This catches any unexpected database errors (connection issues, etc.)
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to retrieve special',
+    });
   }
 });
 
@@ -456,6 +736,249 @@ app.patch('/menu/:id', (req: Request, res: Response) => {
   }
 });
 
+// PATCH /special/:id - Update a special
+// Note: To activate/deactivate a special, use PATCH with { is_active: true/false }
+// We chose this approach over separate POST /special/:id/activate endpoints because:
+// - Follows REST principles (PATCH for partial updates)
+// - Reduces API surface area and complexity
+// - More flexible (can update multiple fields in one request)
+// - Consistent with standard RESTful practices
+app.patch('/special/:id', (req: Request, res: Response) => {
+  // Step 1: Validate route parameter
+  // The idParamSchema ensures the :id parameter is a valid integer
+  // It automatically converts the string to a number
+  const paramResult = idParamSchema.safeParse(req.params);
+
+  if (!paramResult.success) {
+    // If ID validation fails, return 400 (Bad Request)
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: paramResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  // Step 2: Validate request body
+  // The updateSpecialSchema validates that:
+  // - At least one field is provided
+  // - All provided fields meet validation rules
+  // - Date ranges are valid (valid_from < valid_to)
+  const bodyResult = updateSpecialSchema.safeParse(req.body);
+
+  if (!bodyResult.success) {
+    // If body validation fails, return 400 with detailed error messages
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: bodyResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  // Step 3: Extract validated data
+  // TypeScript now knows:
+  // - id is a number (from route param validation)
+  // - updates contains only valid fields with correct types
+  const { id } = paramResult.data;
+  const updates = bodyResult.data;
+
+  try {
+    // Step 4: Check if the special exists
+    // Exclude soft-deleted specials
+    const existingSpecial = db
+      .select()
+      .from(special)
+      .where(and(eq(special.id, id), notDeletedSpecial))
+      .get();
+
+    if (!existingSpecial) {
+      // If special doesn't exist, return 404 (Not Found)
+      return res.status(404).json({ error: 'Special not found' });
+    }
+
+    // Step 5: Handle mutually exclusive is_active logic
+    // If we're setting this special to active (is_active = true),
+    // we need to deactivate all other active specials first
+    // This ensures only one special is active at a time
+    if (updates.is_active === true) {
+      // Find all currently active specials (excluding the one we're updating)
+      const otherActiveSpecials = db
+        .select()
+        .from(special)
+        .where(and(eq(special.is_active, true), sql`${special.id} != ${id}`))
+        .all();
+
+      // If there are other active specials, deactivate them
+      if (otherActiveSpecials.length > 0) {
+        db.update(special)
+          .set({ is_active: false })
+          .where(and(eq(special.is_active, true), sql`${special.id} != ${id}`))
+          .run();
+      }
+    }
+
+    // Step 6: Prepare update data
+    // We need to:
+    // - Convert ISO date strings to Date objects (if provided)
+    // - Handle null values (to clear dates)
+    // - Keep other fields as-is
+    const updateData: {
+      name?: string;
+      price?: number;
+      description?: string;
+      is_active?: boolean;
+      valid_from?: Date | null;
+      valid_to?: Date | null;
+    } = {};
+
+    // Add simple fields if they're being updated
+    if (updates.name !== undefined) {
+      updateData.name = updates.name.trim(); // Already trimmed by schema, but extra safety
+    }
+    if (updates.price !== undefined) {
+      updateData.price = updates.price;
+    }
+    if (updates.description !== undefined) {
+      updateData.description = updates.description.trim();
+    }
+    if (updates.is_active !== undefined) {
+      updateData.is_active = updates.is_active;
+    }
+
+    // Handle date fields - they can be:
+    // - ISO string (convert to Date) - to set a date
+    // - null (clear the date) - to remove the date
+    // - undefined (don't change) - handled by the if check above
+    if (updates.valid_from !== undefined) {
+      // If it's null, set to null (clears the date)
+      // If it's a string, convert to Date object
+      updateData.valid_from =
+        updates.valid_from === null ? null : new Date(updates.valid_from);
+    }
+    if (updates.valid_to !== undefined) {
+      // Same logic for valid_to
+      updateData.valid_to =
+        updates.valid_to === null ? null : new Date(updates.valid_to);
+    }
+
+    // Step 7: Perform the update
+    // Only update fields that were provided (updateData only contains provided fields)
+    db.update(special).set(updateData).where(eq(special.id, id)).run();
+
+    // Step 8: Fetch and return the updated special
+    // We fetch again to ensure we return the latest state from the database
+    const updatedSpecial = db
+      .select()
+      .from(special)
+      .where(eq(special.id, id))
+      .get();
+
+    // Step 9: Safety check (should never happen, but TypeScript requires it)
+    if (!updatedSpecial) {
+      return res.status(500).json({
+        error: 'Failed to retrieve updated special',
+      });
+    }
+
+    // Step 10: Return the updated special
+    // HTTP 200 (OK) is the standard response for successful PATCH requests
+    res.json(updatedSpecial);
+  } catch (error) {
+    // Step 11: Handle errors
+    // Database errors could be constraint violations or connection issues
+    if (error instanceof Error && error.message.includes('UNIQUE constraint')) {
+      return res.status(409).json({
+        error: 'Special with this name already exists',
+      });
+    }
+
+    // Log error for debugging
+    console.error('Database error:', error);
+
+    // Return generic error message
+    return res.status(500).json({
+      error: 'Failed to update special',
+    });
+  }
+});
+
+app.patch('/hours', (req: Request, res: Response) => {
+  // 1. Validate request body
+  const bodyResult = updateHoursSchema.safeParse(req.body);
+  if (!bodyResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: bodyResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  try {
+    // 2. Check if hours record exists
+    const existingHours = db.select().from(hours).get();
+
+    if (existingHours) {
+      // 3. If exists: update only provided fields
+      db.update(hours)
+        .set({
+          ...bodyResult.data,
+        })
+        .where(eq(hours.id, existingHours.id))
+        .run();
+
+      // 4. Fetch and return updated hours
+      const updatedHours = db
+        .select()
+        .from(hours)
+        .where(eq(hours.id, existingHours.id))
+        .get();
+
+      if (!updatedHours) {
+        return res
+          .status(500)
+          .json({ error: 'Failed to retrieve updated hours' });
+      }
+
+      return res.json(updatedHours);
+    } else {
+      // 5. If not exists: create new record
+      // Provide default "Closed" for days not specified
+      const defaultHours = 'Closed';
+      const newHours = {
+        monday: bodyResult.data.monday ?? defaultHours,
+        tuesday: bodyResult.data.tuesday ?? defaultHours,
+        wednesday: bodyResult.data.wednesday ?? defaultHours,
+        thursday: bodyResult.data.thursday ?? defaultHours,
+        friday: bodyResult.data.friday ?? defaultHours,
+        saturday: bodyResult.data.saturday ?? defaultHours,
+        sunday: bodyResult.data.sunday ?? defaultHours,
+      };
+
+      db.insert(hours).values(newHours).run();
+
+      // Fetch and return created hours
+      const createdHours = db.select().from(hours).get();
+      if (!createdHours) {
+        return res
+          .status(500)
+          .json({ error: 'Failed to retrieve created hours' });
+      }
+
+      return res.status(201).json(createdHours);
+    }
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to update store hours',
+    });
+  }
+});
+
 // POST routes
 
 // Create POST endpoint
@@ -499,11 +1022,13 @@ app.post('/menu', (req: Request, res: Response) => {
     // Note: We don't need to manually set id, createdAt, or updatedAt
     // - id is auto-increment (primaryKey with autoIncrement)
     // - createdAt and updatedAt have $defaultFn(() => new Date())
-    db.insert(menuItems).values({
-      name: name.trim(),
-      price: price,
-      description: description.trim(),
-    }).run();
+    db.insert(menuItems)
+      .values({
+        name: name.trim(),
+        price: price,
+        description: description.trim(),
+      })
+      .run();
 
     // Fetch the newly inserted record using the unique name field
     // This approach is:
@@ -538,6 +1063,141 @@ app.post('/menu', (req: Request, res: Response) => {
     console.error('Database error:', error);
     return res.status(500).json({
       error: 'Failed to create menu item',
+    });
+  }
+});
+
+// POST /special - Create a new daily special
+app.post('/special', (req: Request, res: Response) => {
+  // Step 1: Validate request body using Zod schema
+  // safeParse() returns a result object that either:
+  // - success: true with validated data (TypeScript knows the types)
+  // - success: false with error details (what went wrong)
+  const result = createSpecialSchema.safeParse(req.body);
+
+  // Step 2: If validation failed, return user-friendly error messages
+  if (!result.success) {
+    // Map Zod errors to a clean format:
+    // - field: which field had the error (e.g., "name", "price", "valid_from")
+    // - message: what was wrong (e.g., "Name must be at least 2 characters")
+    const errors = result.error.issues.map((err) => ({
+      field: err.path.join('.'), // Join path array: ["valid_from"] -> "valid_from"
+      message: err.message,
+    }));
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: errors,
+    });
+  }
+
+  // Step 3: Extract validated data
+  // TypeScript now knows these are the correct types
+  // result.data has: name (string), price (number), description (string),
+  //                  is_active (boolean | undefined), valid_from (string | undefined),
+  //                  valid_to (string | undefined)
+  const { name, price, description, is_active, valid_from, valid_to } =
+    result.data;
+
+  try {
+    // Step 4: Determine if the new special should be active
+    // Default to true if not provided, but respect explicit false
+    const willBeActive = is_active ?? true;
+
+    // Step 5: If creating an active special, deactivate all other specials first
+    // This ensures only one special is active at a time (mutually exclusive)
+    // Why do this before insert? To maintain data consistency:
+    // - If we insert first, there's a brief moment where two are active
+    // - By deactivating first, we ensure atomicity
+    if (willBeActive) {
+      // Find all currently active specials (excluding soft-deleted) and deactivate them
+      const activeSpecials = db
+        .select()
+        .from(special)
+        .where(and(eq(special.is_active, true), notDeletedSpecial))
+        .all();
+
+      // If there are active specials, deactivate them all
+      if (activeSpecials.length > 0) {
+        // Update all active specials (excluding soft-deleted) to inactive
+        // We use a WHERE clause to update only active ones that are not soft-deleted
+        db.update(special)
+          .set({ is_active: false })
+          .where(and(eq(special.is_active, true), notDeletedSpecial))
+          .run();
+      }
+    }
+
+    // Step 6: Prepare data for database insertion
+    // The database stores dates as timestamps (integers), but we received ISO strings
+    // We need to convert ISO date strings to Date objects, which the ORM will convert to timestamps
+
+    // Build the insert object with only the fields we want to save
+    const specialData: {
+      name: string;
+      price: number;
+      description: string;
+      is_active: boolean;
+      valid_from?: Date | null;
+      valid_to?: Date | null;
+    } = {
+      name: name.trim(), // Trim whitespace (already done by schema, but extra safety)
+      price: price,
+      description: description.trim(),
+      is_active: willBeActive, // Use the determined value
+      // Convert ISO date strings to Date objects for database storage
+      // If valid_from is provided, convert it; otherwise don't include it
+      ...(valid_from && { valid_from: new Date(valid_from) }),
+      ...(valid_to && { valid_to: new Date(valid_to) }),
+    };
+
+    // Step 7: Insert the new special into the database
+    // The database will auto-generate the ID (primaryKey with autoIncrement)
+    db.insert(special).values(specialData).run();
+
+    // Step 8: Fetch the newly created special
+    // Since we don't have a unique constraint on name (unlike menu items), we can't fetch by name
+    // We'll use SQL's MAX(id) to get the most recently inserted record
+    // This works because:
+    // 1. IDs are auto-incrementing, so the highest ID is the most recent insert
+    // 2. SQLite guarantees atomicity, so this is safe even with concurrent requests
+    // 3. This is simpler and more efficient than querying by multiple fields
+    const newSpecial = db
+      .select()
+      .from(special)
+      .where(eq(special.id, sql`(SELECT MAX(id) FROM daily_special)`))
+      .get();
+
+    // Step 9: Safety check - this should never happen, but TypeScript requires it
+    if (!newSpecial) {
+      return res.status(500).json({
+        error: 'Failed to retrieve created special',
+      });
+    }
+
+    // Step 10: Return success response with the created special
+    // HTTP 201 (Created) indicates a new resource was successfully created
+    // Include the full special object with all fields (id, timestamps if any, etc.)
+    res.status(201).json(newSpecial);
+  } catch (error) {
+    // Step 11: Handle errors
+    // Database errors could be:
+    // - Constraint violations (e.g., if we add unique constraints later)
+    // - Connection issues
+    // - Other unexpected errors
+
+    // Check if it's a constraint violation (like duplicate name, if we add that constraint)
+    if (error instanceof Error && error.message.includes('UNIQUE constraint')) {
+      return res.status(409).json({
+        error: 'Special with this name already exists',
+      });
+    }
+
+    // Log the error for debugging (in production, use proper logging)
+    console.error('Database error:', error);
+
+    // Return generic error message (don't expose internal details to users)
+    return res.status(500).json({
+      error: 'Failed to create special',
     });
   }
 });
@@ -654,6 +1314,123 @@ app.delete('/menu/:id/hard-delete', (req: Request, res: Response) => {
     console.error('Database error:', error);
     return res.status(500).json({
       error: 'Failed to delete menu item',
+    });
+  }
+});
+
+// DELETE /special/:id - Soft delete a special
+app.delete('/special/:id', (req: Request, res: Response) => {
+  // 1. Validate route parameter
+  const paramResult = idParamSchema.safeParse(req.params);
+  if (!paramResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: paramResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  const { id } = paramResult.data;
+
+  try {
+    // 2. Check if special exists (excluding already soft-deleted specials)
+    const existingSpecial = db
+      .select()
+      .from(special)
+      .where(and(eq(special.id, id), notDeletedSpecial))
+      .get();
+
+    if (!existingSpecial) {
+      return res.status(404).json({ error: 'Special not found' });
+    }
+
+    // 3. Soft delete the special (set deletedAt timestamp)
+    db.update(special)
+      .set({
+        deletedAt: new Date(),
+        updatedAt: new Date(), // Also update updatedAt for consistency
+      })
+      .where(eq(special.id, id))
+      .run();
+
+    // 4. Fetch and return the soft-deleted special
+    const deletedSpecial = db
+      .select()
+      .from(special)
+      .where(eq(special.id, id))
+      .get();
+
+    res.json({
+      message: 'Special soft-deleted successfully',
+      deletedSpecial: deletedSpecial,
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to soft-delete special',
+    });
+  }
+});
+
+// DELETE /special/:id/hard-delete - Hard delete a soft-deleted special
+app.delete('/special/:id/hard-delete', (req: Request, res: Response) => {
+  // 1. Validate route parameter
+  const paramResult = idParamSchema.safeParse(req.params);
+  if (!paramResult.success) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      details: paramResult.error.issues.map((err) => ({
+        field: err.path.join('.'),
+        message: err.message,
+      })),
+    });
+  }
+
+  const { id } = paramResult.data;
+
+  try {
+    // 2. Check if special exists AND is soft-deleted (all in one query)
+    // This ensures we only hard-delete specials that are already soft-deleted
+    const existingSpecial = db
+      .select()
+      .from(special)
+      .where(and(eq(special.id, id), isNotNull(special.deletedAt)))
+      .get();
+
+    if (!existingSpecial) {
+      // Special doesn't exist OR is not soft-deleted
+      // Check if special exists at all to provide better error message
+      const anySpecial = db
+        .select()
+        .from(special)
+        .where(eq(special.id, id))
+        .get();
+
+      if (!anySpecial) {
+        return res.status(404).json({ error: 'Special not found' });
+      }
+
+      // Special exists but is not soft-deleted
+      return res.status(400).json({
+        error: 'Cannot hard delete active special',
+        message: 'Special must be soft-deleted first',
+      });
+    }
+
+    // 3. Delete the special (we know it's soft-deleted from the query above)
+    db.delete(special).where(eq(special.id, id)).run();
+
+    // 4. Return deleted special (common REST pattern)
+    res.json({
+      message: 'Special deleted successfully',
+      deletedSpecial: existingSpecial,
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    return res.status(500).json({
+      error: 'Failed to delete special',
     });
   }
 });
