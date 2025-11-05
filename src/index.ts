@@ -6,7 +6,7 @@ import { CoffeeShopData, MenuItem, CreateMenuItemInput } from './types.js';
 
 import { db } from './db';
 import { menuItems, hours, special } from './db/schema';
-import { eq, lte, sql, isNull, and } from 'drizzle-orm';
+import { eq, lte, sql, isNull, isNotNull, and } from 'drizzle-orm';
 
 const app = express();
 const PORT = 8080;
@@ -436,8 +436,19 @@ app.patch('/menu/:id', (req: Request, res: Response) => {
       .where(and(eq(menuItems.id, id), notDeleted))
       .get();
 
+    if (!updatedItem) {
+      return res.status(500).json({ error: 'Failed to retrieve updated item' });
+    }
+
     res.json(updatedItem);
   } catch (error) {
+    // Handle database constraint violations (e.g., unique constraint)
+    if (error instanceof Error && error.message.includes('UNIQUE constraint')) {
+      return res.status(409).json({
+        error: 'Coffee with this name already exists',
+      });
+    }
+
     console.error('Database error:', error);
     return res.status(500).json({
       error: 'Failed to update menu item',
@@ -492,7 +503,7 @@ app.post('/menu', (req: Request, res: Response) => {
       name: name.trim(),
       price: price,
       description: description.trim(),
-    });
+    }).run();
 
     // Fetch the newly inserted record using the unique name field
     // This approach is:
@@ -603,18 +614,35 @@ app.delete('/menu/:id/hard-delete', (req: Request, res: Response) => {
   const { id } = paramResult.data;
 
   try {
-    // 2. Check if item exists (and get it for response)
+    // 2. Check if item exists AND is soft-deleted (all in one query)
+    // This ensures we only hard-delete items that are already soft-deleted
     const existingItem = db
       .select()
       .from(menuItems)
-      .where(and(eq(menuItems.id, id), notDeleted))
+      .where(and(eq(menuItems.id, id), isNotNull(menuItems.deletedAt)))
       .get();
 
     if (!existingItem) {
-      return res.status(404).json({ error: 'Item not found' });
+      // Item doesn't exist OR is not soft-deleted
+      // Check if item exists at all to provide better error message
+      const anyItem = db
+        .select()
+        .from(menuItems)
+        .where(eq(menuItems.id, id))
+        .get();
+
+      if (!anyItem) {
+        return res.status(404).json({ error: 'Item not found' });
+      }
+
+      // Item exists but is not soft-deleted
+      return res.status(400).json({
+        error: 'Cannot hard delete active item',
+        message: 'Item must be soft-deleted first',
+      });
     }
 
-    // 3. Delete the item
+    // 3. Delete the item (we know it's soft-deleted from the query above)
     db.delete(menuItems).where(eq(menuItems.id, id)).run();
 
     // 4. Return deleted item (common REST pattern)
@@ -727,6 +755,12 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Export app for testing
+export { app };
+
+// Only start server if this file is run directly
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
